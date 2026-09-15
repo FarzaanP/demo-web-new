@@ -1,0 +1,25 @@
+name: Scrape school news and calendar
+
+on:
+  schedule:
+    - cron: '17 11 * * *'   # 11:17 UTC daily (~7:17am ET) - offset from the hour on purpose
+  workflow_dispatch: {}      # lets anyone trigger a run manually from the Actions tab
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install scraper dependencies
+        run: npm install firebase-admin cheerio @anthropic-ai/sdk
+
+      - name: Run scraper
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: node scripts/scrape-news.js

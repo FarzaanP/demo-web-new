@@ -1,0 +1,97 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Reads this user's membership doc for a given club, to check role.
+    // Returns null (via get() 404) if they were never a member.
+    function membershipOf(clubId, uid) {
+      return get(/databases/$(database)/documents/clubs/$(clubId)/members/$(uid)).data;
+    }
+
+    function isClubOfficer(clubId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/clubs/$(clubId)/members/$(request.auth.uid)) &&
+        membershipOf(clubId, request.auth.uid).role in ['president', 'officer'];
+    }
+
+    // --- users/{uid} ---
+    // Anyone signed in can read basic profiles (needed to show member
+    // names on a club page). Only the owner can write their own doc.
+    match /users/{uid} {
+      allow read: if isSignedIn();
+      allow create: if isSelf(uid);
+      allow update: if isSelf(uid);
+      allow delete: if false;
+    }
+
+    // --- clubs/{clubId} ---
+    match /clubs/{clubId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isClubOfficer(clubId);
+      allow delete: if false;
+
+      // --- clubs/{clubId}/members/{uid} ---
+      match /members/{uid} {
+        allow read: if isSignedIn();
+        // A student can create their own membership doc (join request).
+        allow create: if isSelf(uid);
+        // A student can delete their own membership (leave / cancel request).
+        // An officer can also remove someone else's membership.
+        allow delete: if isSelf(uid) || isClubOfficer(clubId);
+        // Only officers can change status (approve) or role (promote) -
+        // except a member updating nothing but their own doc isn't allowed
+        // here, since role/status changes should always go through an officer.
+        allow update: if isClubOfficer(clubId);
+      }
+
+      // --- clubs/{clubId}/announcements/{announcementId} ---
+      match /announcements/{announcementId} {
+        allow read: if isSignedIn();
+        allow create: if isClubOfficer(clubId);
+        allow update, delete: if isClubOfficer(clubId);
+      }
+    }
+
+    // --- events/{eventId} ---
+    match /events/{eventId} {
+      allow read: if isSignedIn();
+      allow create: if isClubOfficer(request.resource.data.clubId);
+      allow update, delete: if isClubOfficer(resource.data.clubId);
+
+      // --- events/{eventId}/attendees/{uid} ---
+      match /attendees/{uid} {
+        allow read: if isSignedIn();
+        allow create, update, delete: if isSelf(uid);
+      }
+    }
+
+    // --- schoolNews/{id}, academicCalendar/{id}, campusDigest/{id} ---
+    // Written only by scripts/scrape-news.js via the Firebase Admin SDK,
+    // which bypasses these rules entirely (admin credentials are never
+    // subject to security rules). Every client write is rejected here on
+    // purpose - nobody signed in through the normal app should ever be
+    // able to edit scraped news or calendar data.
+    match /schoolNews/{id} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+    match /academicCalendar/{id} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+    match /campusDigest/{id} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+  }
+}
